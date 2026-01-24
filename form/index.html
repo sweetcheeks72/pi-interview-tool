@@ -17,6 +17,7 @@
     <header class="interview-header">
       <div class="header-row">
         <h1 id="form-title"></h1>
+        <button type="button" class="save-btn-header" id="save-btn-header" title="Save snapshot">Save</button>
       </div>
       <p id="form-description"></p>
     </header>
@@ -27,6 +28,7 @@
       <div id="error-container" aria-live="polite" class="error-message hidden"></div>
 
       <footer class="form-footer">
+        <button type="button" id="save-btn-footer" class="btn-secondary">Save</button>
         <button type="submit" id="submit-btn" class="btn-primary">Submit</button>
       </footer>
     </form>
@@ -109,6 +111,8 @@
         </div>
       </div>
     </div>
+
+    <div id="save-toast" class="save-toast hidden" aria-live="polite"></div>
   </main>
 
   <script>

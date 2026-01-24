@@ -54,8 +54,22 @@ interface InterviewDetails {
 	queuedMessage?: string;
 }
 
+// Types for saved interviews
+interface SavedFromMeta {
+	cwd: string;
+	branch: string | null;
+	sessionId: string;
+}
+
+interface SavedQuestionsFile extends QuestionsFile {
+	savedAnswers?: ResponseItem[];
+	savedAt?: string;
+	wasSubmitted?: boolean;
+	savedFrom?: SavedFromMeta;
+}
+
 const InterviewParams = Type.Object({
-	questions: Type.String({ description: "Path to questions JSON file" }),
+	questions: Type.String({ description: "Path to questions JSON or saved interview HTML file" }),
 	timeout: Type.Optional(
 		Type.Number({ description: "Seconds before auto-timeout", default: 600 })
 	),
@@ -63,7 +77,7 @@ const InterviewParams = Type.Object({
 	theme: Type.Optional(
 		Type.Object(
 			{
-				mode: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("light"), Type.Literal("dark")])),
+				mode: Type.Optional(Type.String({ description: "Theme mode: 'auto', 'light', or 'dark'" })),
 				name: Type.Optional(Type.String()),
 				lightPath: Type.Optional(Type.String()),
 				darkPath: Type.Optional(Type.String()),
@@ -75,7 +89,11 @@ const InterviewParams = Type.Object({
 });
 
 function expandHome(value: string): string {
-	if (value.startsWith("~" + path.sep)) {
+	if (value === "~") {
+		return os.homedir();
+	}
+	// Handle both Unix (/) and Windows (\) separators for user convenience
+	if (value.startsWith("~/") || value.startsWith("~\\")) {
 		return path.join(os.homedir(), value.slice(2));
 	}
 	return value;
@@ -103,18 +121,27 @@ function mergeThemeConfig(
 	};
 }
 
-function loadQuestions(questionsPath: string, cwd: string): QuestionsFile {
-	const absolutePath = path.isAbsolute(questionsPath)
-		? questionsPath
-		: path.join(cwd, questionsPath);
+function loadQuestions(questionsPath: string, cwd: string): SavedQuestionsFile {
+	// Expand ~ first, then check if absolute
+	const expanded = expandHome(questionsPath);
+	const absolutePath = path.isAbsolute(expanded)
+		? expanded
+		: path.join(cwd, questionsPath); // Use original if relative (no ~)
 
 	if (!fs.existsSync(absolutePath)) {
 		throw new Error(`Questions file not found: ${absolutePath}`);
 	}
 
+	const content = fs.readFileSync(absolutePath, "utf-8");
+
+	// Handle HTML files (saved interviews)
+	if (absolutePath.endsWith(".html") || absolutePath.endsWith(".htm")) {
+		return loadSavedInterview(content, absolutePath);
+	}
+
+	// Original JSON handling
 	let data: unknown;
 	try {
-		const content = fs.readFileSync(absolutePath, "utf-8");
 		data = JSON.parse(content);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
@@ -122,6 +149,81 @@ function loadQuestions(questionsPath: string, cwd: string): QuestionsFile {
 	}
 
 	return validateQuestions(data);
+}
+
+function loadSavedInterview(html: string, filePath: string): SavedQuestionsFile {
+	// Extract JSON from <script id="pi-interview-data">
+	const match = html.match(/<script[^>]+id=["']pi-interview-data["'][^>]*>([\s\S]*?)<\/script>/i);
+	if (!match) {
+		throw new Error("Invalid saved interview: missing embedded data");
+	}
+
+	let data: unknown;
+	try {
+		data = JSON.parse(match[1]);
+	} catch {
+		throw new Error("Invalid saved interview: malformed JSON");
+	}
+
+	const raw = data as Record<string, unknown>;
+	const validated = validateQuestions(data);
+
+	// Resolve relative image paths to absolute based on HTML file location
+	const snapshotDir = path.dirname(filePath);
+	const savedAnswers = Array.isArray(raw.savedAnswers)
+		? resolveAnswerPaths(raw.savedAnswers as ResponseItem[], snapshotDir)
+		: undefined;
+
+	// Validate savedFrom if present
+	let savedFrom: SavedFromMeta | undefined;
+	if (raw.savedFrom && typeof raw.savedFrom === "object") {
+		const sf = raw.savedFrom as Record<string, unknown>;
+		if (typeof sf.cwd === "string" && typeof sf.sessionId === "string") {
+			savedFrom = {
+				cwd: sf.cwd,
+				branch: typeof sf.branch === "string" ? sf.branch : null,
+				sessionId: sf.sessionId,
+			};
+		}
+	}
+
+	// Return validated questions plus saved interview metadata
+	return {
+		...validated,
+		savedAnswers,
+		savedAt: typeof raw.savedAt === "string" ? raw.savedAt : undefined,
+		wasSubmitted: typeof raw.wasSubmitted === "boolean" ? raw.wasSubmitted : undefined,
+		savedFrom,
+	};
+}
+
+function resolveAnswerPaths(answers: ResponseItem[], baseDir: string): ResponseItem[] {
+	return answers.map((ans) => ({
+		...ans,
+		value: resolvePathValue(ans.value, baseDir),
+		attachments: ans.attachments?.map((p) => resolveImagePath(p, baseDir)),
+	}));
+}
+
+function resolveImagePath(p: string, baseDir: string): string {
+	if (!p) return p;
+	// Skip URLs
+	if (p.includes("://")) return p;
+	// Expand ~ first
+	const expanded = expandHome(p);
+	// Don't resolve if already absolute (cross-platform check)
+	if (path.isAbsolute(expanded)) {
+		return expanded;
+	}
+	// Resolve relative path against snapshot directory
+	return path.join(baseDir, p);
+}
+
+function resolvePathValue(value: string | string[], baseDir: string): string | string[] {
+	if (Array.isArray(value)) {
+		return value.map((v) => resolveImagePath(v, baseDir));
+	}
+	return typeof value === "string" && value ? resolveImagePath(value, baseDir) : value;
 }
 
 function formatResponses(responses: ResponseItem[]): string {
@@ -202,6 +304,11 @@ export default function (pi: ExtensionAPI) {
 			const themeConfig = mergeThemeConfig(settings.theme, theme, ctx.cwd);
 			const questionsData = loadQuestions(questions, ctx.cwd);
 
+			// Expand ~ in snapshotDir if present
+			const snapshotDir = settings.snapshotDir
+				? expandHome(settings.snapshotDir)
+				: undefined; // Server will use default
+
 			if (signal?.aborted) {
 				return {
 					content: [{ type: "text", text: "Interview was aborted." }],
@@ -275,6 +382,9 @@ export default function (pi: ExtensionAPI) {
 						port: settings.port,
 						verbose,
 						theme: themeConfig,
+						snapshotDir,
+						autoSaveOnSubmit: settings.autoSaveOnSubmit ?? true,
+						savedAnswers: questionsData.savedAnswers,
 					},
 					{
 						onSubmit: (responses) => finish("completed", responses),

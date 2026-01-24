@@ -1970,6 +1970,65 @@
     }
   }
 
+  // Set storage key without loading (for revival from saved interview)
+  async function initStorageKeyOnly() {
+    try {
+      const hash = await hashQuestions();
+      session.storageKey = `pi-interview-${hash}`;
+    } catch (_err) {
+      session.storageKey = null;
+    }
+  }
+
+  // Pre-populate form from saved interview answers
+  function populateFromSavedAnswers(savedAnswers) {
+    // Convert ResponseItem[] to Record for existing populateForm()
+    const valueMap = {};
+    savedAnswers.forEach((ans) => {
+      const question = questions.find((q) => q.id === ans.id);
+      if (question?.type !== "image") {
+        valueMap[ans.id] = ans.value;
+      }
+    });
+    populateForm(valueMap);
+
+    // Restore attachments to attachPathState
+    savedAnswers.forEach((ans) => {
+      if (ans.attachments && ans.attachments.length > 0) {
+        attachPathState.set(ans.id, [...ans.attachments]);
+        attachments.render(ans.id);
+        const panel = document.querySelector(
+          `[data-attach-inline-for="${escapeSelector(ans.id)}"]`
+        );
+        if (panel) panel.classList.remove("hidden");
+        const btn = document.querySelector(
+          `.attach-btn[data-question-id="${escapeSelector(ans.id)}"]`
+        );
+        if (btn) btn.classList.add("has-attachment");
+      }
+    });
+
+    // Restore image paths for image-type questions
+    savedAnswers.forEach((ans) => {
+      const question = questions.find((q) => q.id === ans.id);
+      if (question?.type === "image" && ans.value) {
+        const paths = Array.isArray(ans.value) ? ans.value : [ans.value];
+        const validPaths = paths.filter((p) => typeof p === "string" && p);
+        if (validPaths.length > 0) {
+          imagePathState.set(ans.id, validPaths);
+          questionImages.render(ans.id);
+        }
+      }
+    });
+
+    // Update done states for multi-select
+    questions.forEach((q) => {
+      if (q.type === "multi") {
+        updateDoneState(q.id);
+      }
+    });
+  }
+
   function readFileBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -2022,6 +2081,54 @@
     return { responses, images };
   }
 
+  // Save interview snapshot
+  async function saveInterview(options = {}) {
+    const { submitted = false } = options;
+
+    try {
+      const payload = await buildPayload();
+      const response = await fetch("/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: sessionToken,
+          responses: payload.responses,
+          images: payload.images,
+          submitted,
+        }),
+      });
+      const result = await response.json();
+      if (result.ok) {
+        showSaveSuccess(result.relativePath);
+        return true;
+      } else {
+        if (!submitted) showSaveError(result.error);
+        return false;
+      }
+    } catch (err) {
+      if (!submitted) {
+        showSaveError("Failed to save interview");
+      }
+      return false;
+    }
+  }
+
+  function showSaveSuccess(savePath) {
+    const toast = document.getElementById("save-toast");
+    if (!toast) return;
+    toast.textContent = `Saved to ${savePath}`;
+    toast.className = "save-toast success";
+    setTimeout(() => toast.classList.add("hidden"), 3000);
+  }
+
+  function showSaveError(message) {
+    const toast = document.getElementById("save-toast");
+    if (!toast) return;
+    toast.textContent = message || "Save failed";
+    toast.className = "save-toast error";
+    setTimeout(() => toast.classList.add("hidden"), 3000);
+  }
+
   async function submitForm(event) {
     event.preventDefault();
     clearGlobalError();
@@ -2037,16 +2144,22 @@
         body: JSON.stringify({ token: sessionToken, ...payload }),
       });
 
-      const data = await response.json().catch(() => ({ ok: false, error: "Invalid server response" }));
+      const result = await response.json().catch(() => ({ ok: false, error: "Invalid server response" }));
 
-      if (!response.ok || !data.ok) {
-        if (data.field) {
-          setFieldError(data.field, data.error || "Invalid input");
+      if (!response.ok || !result.ok) {
+        if (result.field) {
+          setFieldError(result.field, result.error || "Invalid input");
         } else {
-          showGlobalError(data.error || "Submission failed.");
+          showGlobalError(result.error || "Submission failed.");
         }
         submitBtn.disabled = false;
         return;
+      }
+
+      // Auto-save on successful submit (fire-and-forget)
+      // Note: data is window.__INTERVIEW_DATA__, result is server response
+      if (data.autoSaveOnSubmit !== false) {
+        saveInterview({ submitted: true });
       }
 
       clearProgress();
@@ -2098,11 +2211,28 @@
       containerEl.appendChild(createQuestionCard(question, index));
     });
 
-    initStorage();
+    // Pre-populate: savedAnswers takes precedence over localStorage
+    if (data.savedAnswers && Array.isArray(data.savedAnswers)) {
+      populateFromSavedAnswers(data.savedAnswers);
+      initStorageKeyOnly();
+    } else {
+      initStorage();
+    }
+
     startHeartbeat();
     startQueuePolling();
 
     formEl.addEventListener("submit", submitForm);
+
+    // Wire up save buttons
+    const saveBtnHeader = document.getElementById("save-btn-header");
+    const saveBtnFooter = document.getElementById("save-btn-footer");
+    if (saveBtnHeader) {
+      saveBtnHeader.addEventListener("click", () => saveInterview());
+    }
+    if (saveBtnFooter) {
+      saveBtnFooter.addEventListener("click", () => saveInterview());
+    }
     if (queueToastClose) {
       queueToastClose.addEventListener("click", () => {
         queueState.dismissed = true;

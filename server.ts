@@ -46,6 +46,7 @@ interface SessionsFile {
 
 const SESSIONS_FILE = join(homedir(), ".pi", "interview-sessions.json");
 const RECOVERY_DIR = join(homedir(), ".pi", "interview-recovery");
+const SNAPSHOTS_DIR = join(homedir(), ".pi", "interview-snapshots");
 const STALE_THRESHOLD_MS = 30000;
 const STALE_PRUNE_MS = 60000;
 const RECOVERY_MAX_AGE_DAYS = 7;
@@ -192,6 +193,9 @@ export interface InterviewServerOptions {
 	port?: number;
 	verbose?: boolean;
 	theme?: InterviewThemeConfig;
+	snapshotDir?: string;
+	autoSaveOnSubmit?: boolean;
+	savedAnswers?: ResponseItem[];
 }
 
 export interface InterviewServerCallbacks {
@@ -310,7 +314,8 @@ async function parseJSONBody(req: IncomingMessage): Promise<unknown> {
 
 async function handleImageUpload(
 	image: { id: string; filename: string; mimeType: string; data: string },
-	sessionId: string
+	sessionId: string,
+	targetDir?: string
 ): Promise<string> {
 	if (!ALLOWED_TYPES.includes(image.mimeType)) {
 		throw new Error(`Invalid image type: ${image.mimeType}`);
@@ -322,7 +327,7 @@ async function handleImageUpload(
 	}
 
 	const sanitized = image.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-	const basename = sanitized.split(/[/\\]/).pop() || `image_${randomUUID()}`;
+	const fileBasename = sanitized.split(/[/\\]/).pop() || `image_${randomUUID()}`;
 	const extMap: Record<string, string> = {
 		"image/png": ".png",
 		"image/jpeg": ".jpg",
@@ -330,12 +335,12 @@ async function handleImageUpload(
 		"image/webp": ".webp",
 	};
 	const ext = extMap[image.mimeType] ?? "";
-	const filename = basename.includes(".") ? basename : `${basename}${ext}`;
+	const filename = fileBasename.includes(".") ? fileBasename : `${fileBasename}${ext}`;
 
-	const tempDir = join(tmpdir(), `pi-interview-${sessionId}`);
-	await mkdir(tempDir, { recursive: true });
+	const dir = targetDir ?? join(tmpdir(), `pi-interview-${sessionId}`);
+	await mkdir(dir, { recursive: true });
 
-	const filepath = join(tempDir, filename);
+	const filepath = join(dir, filename);
 	await writeFile(filepath, buffer);
 
 	return filepath;
@@ -372,6 +377,223 @@ function ensureQuestionId(
 		return { ok: false, error: `Unknown question id: ${id}` };
 	}
 	return { ok: true, question };
+}
+
+// HTML generation for saved interviews
+interface SavedFromMeta {
+	cwd: string;
+	branch: string | null;
+	sessionId: string;
+}
+
+interface SavedInterviewMeta {
+	savedAt: string;
+	wasSubmitted: boolean;
+	savedFrom: SavedFromMeta;
+}
+
+function escapeHtml(str: string): string {
+	return str
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;");
+}
+
+function renderQuestionsHtml(questionsList: Question[], answers: ResponseItem[]): string {
+	const answerMap = new Map(answers.map((a) => [a.id, a]));
+	return questionsList
+		.map((q, i) => {
+			const ans = answerMap.get(q.id);
+			const value = ans?.value;
+			const attachments = ans?.attachments ?? [];
+
+			// Format answer based on question type
+			let answerHtml: string;
+			if (!value || (Array.isArray(value) && value.length === 0)) {
+				answerHtml = '<div class="saved-answer empty">(no answer)</div>';
+			} else if (q.type === "image") {
+				const paths = Array.isArray(value) ? value : [value];
+				answerHtml = `<div class="saved-images">${paths
+					.map((p) => `<img src="${escapeHtml(p)}" alt="uploaded image">`)
+					.join("")}</div>`;
+			} else if (q.type === "multi") {
+				const items = Array.isArray(value) ? value : [value];
+				answerHtml = `<div class="saved-answer"><ul>${items
+					.map((v) => `<li>${escapeHtml(String(v))}</li>`)
+					.join("")}</ul></div>`;
+			} else {
+				answerHtml = `<div class="saved-answer">${escapeHtml(String(value))}</div>`;
+			}
+
+			// Render code block if present
+			const codeHtml = q.codeBlock
+				? `<pre class="saved-code"><code>${escapeHtml(q.codeBlock.code)}</code></pre>`
+				: "";
+
+			// Render attachments if any
+			const attachHtml =
+				attachments.length > 0
+					? `<div class="saved-attachments">${attachments
+							.map((p) => `<img src="${escapeHtml(p)}" alt="attachment">`)
+							.join("")}</div>`
+					: "";
+
+			return `
+      <div class="saved-question">
+        <h2>${i + 1}. ${escapeHtml(q.question)}</h2>
+        ${codeHtml}
+        ${answerHtml}
+        ${attachHtml}
+      </div>
+    `;
+		})
+		.join("\n");
+}
+
+const SAVED_VIEW_STYLES = `
+.saved-interview {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: var(--spacing);
+}
+.saved-header {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-muted);
+}
+.saved-header h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+.saved-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.saved-status {
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+.saved-status.submitted {
+  color: var(--success);
+  border: 1px solid var(--success);
+}
+.saved-status.draft {
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+.saved-question {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius);
+}
+.saved-question h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.saved-code {
+  margin: 12px 0;
+  padding: 12px;
+  background: var(--bg-body);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-size: 13px;
+}
+.saved-answer {
+  color: var(--fg);
+  padding: 8px 12px;
+  background: var(--bg-body);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+}
+.saved-answer.empty {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+.saved-answer ul {
+  margin: 0;
+  padding-left: 20px;
+}
+.saved-images, .saved-attachments {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.saved-images img, .saved-attachments img {
+  max-width: 200px;
+  max-height: 150px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-muted);
+}
+`;
+
+function generateSavedHtml(options: {
+	questions: QuestionsFile;
+	answers: ResponseItem[];
+	meta: SavedInterviewMeta;
+	baseStyles: string;
+	themeCss: string;
+}): string {
+	const { questions: questionsData, answers, meta, baseStyles, themeCss } = options;
+	const title = questionsData.title || "Interview";
+
+	// Build the data object for embedding
+	const dataForEmbedding = {
+		title: questionsData.title,
+		description: questionsData.description,
+		questions: questionsData.questions,
+		savedAnswers: answers,
+		savedAt: meta.savedAt,
+		wasSubmitted: meta.wasSubmitted,
+		savedFrom: meta.savedFrom,
+	};
+
+	const embeddedJson = safeInlineJSON(dataForEmbedding);
+	const questionsHtml = renderQuestionsHtml(questionsData.questions, answers);
+	const savedDate = new Date(meta.savedAt).toLocaleString();
+	const statusClass = meta.wasSubmitted ? "submitted" : "draft";
+	const statusText = meta.wasSubmitted ? "Submitted" : "Draft";
+
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(title)} - Saved Interview</title>
+  <style>
+${baseStyles}
+${themeCss}
+${SAVED_VIEW_STYLES}
+  </style>
+</head>
+<body>
+  <main class="saved-interview">
+    <header class="saved-header">
+      <h1>${escapeHtml(title)}</h1>
+      <div class="saved-meta">
+        <span>Saved: ${escapeHtml(savedDate)}</span>
+        <span>Project: ${escapeHtml(meta.savedFrom.cwd)}</span>
+        ${meta.savedFrom.branch ? `<span>Branch: ${escapeHtml(meta.savedFrom.branch)}</span>` : ""}
+        <span class="saved-status ${statusClass}">${statusText}</span>
+      </div>
+    </header>
+    <div class="saved-questions">
+${questionsHtml}
+    </div>
+  </main>
+  <script type="application/json" id="pi-interview-data">
+${embeddedJson}
+  </script>
+</body>
+</html>`;
 }
 
 export async function startInterviewServer(
@@ -468,6 +690,8 @@ export async function startInterviewServer(
 						mode: themeMode,
 						toggleHotkey: themeConfig.toggleHotkey,
 					},
+					savedAnswers: options.savedAnswers,
+					autoSaveOnSubmit: options.autoSaveOnSubmit ?? true,
 				});
 				const html = TEMPLATE
 					.replace("/* __INTERVIEW_DATA_PLACEHOLDER__ */", inlineData)
@@ -704,6 +928,123 @@ export async function startInterviewServer(
 				unregisterSession(sessionId);
 				sendJson(res, 200, { ok: true });
 				setImmediate(() => callbacks.onSubmit(responses));
+				return;
+			}
+
+			if (method === "POST" && url.pathname === "/save") {
+				const body = await parseJSONBody(req).catch((err) => {
+					if (err instanceof BodyTooLargeError) {
+						sendJson(res, err.statusCode, { ok: false, error: err.message });
+						return null;
+					}
+					sendJson(res, 400, { ok: false, error: err.message });
+					return null;
+				});
+				if (!body) return;
+				if (!validateTokenBody(body, sessionToken, res)) return;
+				// Note: don't check `completed` - allow save after submit
+
+				const payload = body as {
+					responses?: ResponseItem[];
+					images?: Array<{
+						id: string;
+						filename: string;
+						mimeType: string;
+						data: string;
+						isAttachment?: boolean;
+					}>;
+					submitted?: boolean;
+				};
+
+				const responsesInput = Array.isArray(payload.responses) ? payload.responses : [];
+				const imagesInput = Array.isArray(payload.images) ? payload.images : [];
+				const submitted = payload.submitted === true;
+
+				const snapshotBaseDir = options.snapshotDir ?? SNAPSHOTS_DIR;
+
+				// Build folder name: {title}-{project}-{branch}-{timestamp}[-submitted]
+				const now = new Date();
+				const date = now.toISOString().slice(0, 10);
+				const time = now.toTimeString().slice(0, 8).replace(/:/g, "");
+				const timestamp = `${date}-${time}`;
+				const project = sanitizeForFilename(basename(cwd) || "unknown");
+				const branch = sanitizeForFilename(gitBranch || "nogit");
+				const titleSlug = sanitizeForFilename(questions.title || "interview");
+				const suffix = submitted ? "-submitted" : "";
+				const folderName = `${titleSlug}-${project}-${branch}-${timestamp}${suffix}`;
+				const snapshotPath = join(snapshotBaseDir, folderName);
+				const imagesPath = join(snapshotPath, "images");
+
+				await mkdir(snapshotPath, { recursive: true });
+
+				// Process responses - make a deep copy to avoid mutating input
+				const savedResponses: ResponseItem[] = responsesInput.map((r) => ({
+					...r,
+					value: Array.isArray(r.value) ? [...r.value] : r.value,
+					attachments: r.attachments ? [...r.attachments] : undefined,
+				}));
+
+				// Process uploaded images - save to images/ subfolder
+				if (imagesInput.length > 0) {
+					await mkdir(imagesPath, { recursive: true });
+					for (const image of imagesInput) {
+						if (!image || typeof image.id !== "string") continue;
+
+						try {
+							const absPath = await handleImageUpload(image, sessionId, imagesPath);
+							const relPath = "images/" + basename(absPath);
+
+							const existing = savedResponses.find((r) => r.id === image.id);
+							if (image.isAttachment) {
+								if (existing) {
+									existing.attachments = existing.attachments || [];
+									existing.attachments.push(relPath);
+								} else {
+									savedResponses.push({ id: image.id, value: "", attachments: [relPath] });
+								}
+							} else {
+								if (existing) {
+									if (Array.isArray(existing.value)) {
+										existing.value.push(relPath);
+									} else if (existing.value === "") {
+										existing.value = relPath;
+									} else {
+										existing.value = [existing.value, relPath];
+									}
+								} else {
+									savedResponses.push({ id: image.id, value: relPath });
+								}
+							}
+						} catch (err) {
+							const message = err instanceof Error ? err.message : "Image upload failed";
+							sendJson(res, 400, { ok: false, error: message, field: image.id });
+							return;
+						}
+					}
+				}
+
+				// Generate HTML with embedded data
+				const meta: SavedInterviewMeta = {
+					savedAt: new Date().toISOString(),
+					wasSubmitted: submitted,
+					savedFrom: { cwd: normalizedCwd, branch: gitBranch, sessionId },
+				};
+				const themeCss = themeMode === "light" ? themeLightCss : themeDarkCss;
+				const html = generateSavedHtml({
+					questions,
+					answers: savedResponses,
+					meta,
+					baseStyles: STYLES,
+					themeCss,
+				});
+
+				await writeFile(join(snapshotPath, "index.html"), html);
+
+				sendJson(res, 200, {
+					ok: true,
+					path: snapshotPath,
+					relativePath: normalizePath(snapshotPath),
+				});
 				return;
 			}
 

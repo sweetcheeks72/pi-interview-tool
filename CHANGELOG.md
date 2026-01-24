@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.0 - 2026-01-24
+
+### Added
+- **Save snapshots**: Save interview state to HTML files for later review or revival
+  - Manual save via Save button (header and footer)
+  - Auto-save on submit (enabled by default, configurable via `autoSaveOnSubmit`)
+  - Snapshots saved to `~/.pi/interview-snapshots/` (configurable via `snapshotDir`)
+  - Self-contained HTML with embedded JSON data for revival
+  - Images copied to `images/` subfolder with relative paths
+  - Folder naming: `{title}-{project}-{branch}-{timestamp}[-submitted]/`
+- **Revival from saved interviews**: Pass saved HTML path to `interview()` to reopen with pre-populated answers
+  - Supports editing and re-submitting saved interviews
+  - Image paths resolved relative to snapshot location
+- **New settings**: `snapshotDir` and `autoSaveOnSubmit` in interview settings
+- Save toast notification shows save location on success/failure
+
+### Changed
+- `loadQuestions()` now accepts both JSON and HTML files
+- Questions parameter can be a path to a saved interview HTML
+
+---
+
 ## 0.3.2 - 2026-01-18
 
 ### Changed

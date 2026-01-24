@@ -17,6 +17,8 @@ export interface InterviewSettings {
 	timeout?: number;
 	port?: number;
 	theme?: InterviewThemeSettings;
+	snapshotDir?: string;      // Default: ~/.pi/interview-snapshots/
+	autoSaveOnSubmit?: boolean; // Default: true
 }
 
 export function loadSettings(): InterviewSettings {

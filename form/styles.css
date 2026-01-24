@@ -1409,3 +1409,62 @@ button {
   margin-bottom: 1rem;
 }
 
+/* Save button in header */
+.save-btn-header {
+  background: transparent;
+  border: 1px solid var(--border-muted);
+  color: var(--fg-muted);
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease;
+  font-family: var(--font-ui);
+}
+
+.save-btn-header:hover {
+  border-color: var(--fg-dim);
+  color: var(--fg);
+}
+
+.save-btn-header:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+/* Save toast notification */
+.save-toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  font-size: 12px;
+  z-index: 150;
+  animation: toast-in 200ms ease-out;
+}
+
+.save-toast.success {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.save-toast.error {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+

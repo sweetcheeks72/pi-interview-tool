@@ -32,6 +32,7 @@ The tool is automatically discovered on next pi session. No build step required.
 - **Multi-Agent Support**: Queue detection prevents focus stealing when multiple agents run interviews
 - **Queue Toast Switcher**: Active interviews show a top-right toast with a dropdown to open queued sessions
 - **Session Recovery**: Abandoned/timed-out interviews save questions for later retry
+- **Save Snapshots**: Save interview state to HTML for later review or revival
 - **Session Status Bar**: Shows project path, git branch, and session ID for identification
 - **Image Support**: Drag & drop anywhere on question, file picker, paste image or path
 - **Path Normalization**: Handles shell-escaped paths (`\ `) and macOS screenshot filenames (narrow no-break space before AM/PM)
@@ -205,6 +206,8 @@ Settings in `~/.pi/agent/settings.json`:
   "interview": {
     "timeout": 600,
     "port": 19847,
+    "snapshotDir": "~/.pi/interview-snapshots/",
+    "autoSaveOnSubmit": true,
     "theme": {
       "mode": "auto",
       "name": "default",
@@ -217,6 +220,10 @@ Settings in `~/.pi/agent/settings.json`:
 ```
 
 **Timeout precedence**: params > settings > default (600s)
+
+**Snapshot settings:**
+- `snapshotDir`: Directory for saved interview snapshots (default: `~/.pi/interview-snapshots/`)
+- `autoSaveOnSubmit`: Automatically save snapshot on successful submit (default: `true`)
 
 **Port setting**: Set a fixed `port` (e.g., `19847`) to use a consistent port across sessions.
 
@@ -336,6 +343,45 @@ If an interview times out or is abandoned (tab closed, lost connection), the que
 **To retry an abandoned interview:**
 ```javascript
 interview({ questions: "~/.pi/interview-recovery/2026-01-02_093000_myproject_main_65bec3f4.json" })
+```
+
+## Saving Interviews
+
+Save a snapshot of your interview at any time for later review or to resume.
+
+**Manual Save:**
+- Click the Save button (header or footer)
+- Saves to `~/.pi/interview-snapshots/` by default
+- Creates folder with `index.html` + `images/` subfolder
+
+**Auto-save on Submit:**
+- Enabled by default (`autoSaveOnSubmit: true` in settings)
+- Automatically saves after successful submission
+- Folder name includes `-submitted` suffix
+
+**Reviving a Saved Interview:**
+```javascript
+interview({ questions: "~/.pi/interview-snapshots/project-setup-myapp-main-2026-01-20-141523/index.html" })
+```
+The form opens with answers pre-populated. Edit and submit as normal.
+
+**Configuration:**
+```json
+{
+  "interview": {
+    "snapshotDir": "~/.pi/interview-snapshots/",
+    "autoSaveOnSubmit": true
+  }
+}
+```
+
+**Snapshot Structure:**
+```
+~/.pi/interview-snapshots/
+  {title}-{project}-{branch}-{timestamp}[-submitted]/
+    index.html          # Human-readable + embedded JSON for revival
+    images/
+      mockup.png        # Uploaded images (relative paths in HTML)
 ```
 
 ## Limits
