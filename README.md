@@ -1,3 +1,7 @@
+<p>
+  <img src="https://raw.githubusercontent.com/nicobailon/pi-interview-tool/main/banner.png" alt="pi-interview" width="1100">
+</p>
+
 # Interview Tool
 
 A custom tool for pi-agent that opens a web-based form to gather user responses to clarification questions.
