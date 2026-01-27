@@ -10,17 +10,11 @@ https://github.com/user-attachments/assets/52285bd9-956e-4020-aca5-9fbd82916934
 
 ## Installation
 
-Clone or copy this directory to your pi-agent extensions folder:
-
 ```bash
-# Clone to user extensions directory (available in all projects)
-git clone https://github.com/nicobailon/pi-interview-tool ~/.pi/agent/extensions/interview
-
-# Or copy manually
-cp -r /path/to/interview ~/.pi/agent/extensions/
+pi install npm:pi-interview
 ```
 
-The tool is automatically discovered on next pi session. No build step required.
+Restart pi to load the extension.
 
 **Requirements:**
 - pi-agent v0.35.0 or later (extensions API)
