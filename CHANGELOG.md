@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-01-27
+
+### Fixed
+- Google API compatibility: Use `StringEnum` for theme mode instead of `Type.String()` (thanks @Whamp, PR #3)
+
 ## [0.4.3] - 2026-01-27
 
 ### Fixed
