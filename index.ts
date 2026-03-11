@@ -438,12 +438,27 @@ export default function (pi: ExtensionAPI) {
 							})();
 							queuedLines.push(`  Project: ${normalizedCwd}${gitBranch ? ` (${gitBranch})` : ""}`);
 							queuedLines.push(`  Session: ${sessionId.slice(0, 8)}`);
-							queuedLines.push("");
-							queuedLines.push(`Open when ready: ${url}`);
-							queuedLines.push("");
-							queuedLines.push("Server waiting until you open the link.");
+
+							// v3.7 FIX: Always auto-open the new interview in the browser.
+							// Previously, when another interview was active (heartbeat within 30s),
+							// the new interview was only queued — the user had to manually click the
+							// URL. This was especially frustrating when governance gates REQUIRED
+							// an interview (e.g., high-impact operations) — the mandatory interview
+							// would be created but never shown to the user.
+							// Now we auto-open regardless, and just inform about the other session.
+							try {
+								await openUrl(pi, url, settings.browser);
+								queuedLines.push("");
+								queuedLines.push("Auto-opened in browser (previous interview still active in another tab).");
+							} catch {
+								// Fallback: if open fails, show the manual link
+								queuedLines.push("");
+								queuedLines.push(`Open when ready: ${url}`);
+								queuedLines.push("");
+								queuedLines.push("Server waiting until you open the link.");
+							}
 							const queuedMessage = queuedLines.join("\n");
-							const queuedSummary = "Interview queued; see tool panel for link.";
+							const queuedSummary = "Interview opened; previous interview still active in another tab.";
 							if (onUpdate) {
 								onUpdate({
 									content: [{ type: "text", text: queuedSummary }],
