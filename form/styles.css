@@ -6,8 +6,8 @@
   --bg-hover: #2b2b37;
   --bg-active-tint: rgba(138, 190, 183, 0.08);
   --fg: #e0e0e0;
-  --fg-muted: #808080;
-  --fg-dim: #666666;
+  --fg-muted: #a0a0a8;
+  --fg-dim: #85858f;
   --accent: #8abeb7;
   --accent-hover: #9dcec7;
   --accent-muted: rgba(138, 190, 183, 0.15);
@@ -212,8 +212,9 @@ body {
 
 .question-context {
   font-family: var(--font-body);
-  font-size: var(--font-size-context);
-  color: var(--fg-muted);
+  font-size: 14px;
+  color: var(--fg);
+  opacity: 0.78;
   line-height: 1.6;
   margin: 0 0 16px;
 }
