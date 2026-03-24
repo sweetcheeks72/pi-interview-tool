@@ -294,10 +294,53 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			if (!ctx.hasUI) {
-				throw new Error(
-					"Interview tool requires interactive mode with browser support. " +
-						"Cannot run in headless/RPC/print mode."
-				);
+				// Headless/subprocess mode: run interview server + open browser directly.
+				// This enables coordinate workers to interview users via browser.
+				const settings = loadSettings();
+				const timeoutSeconds = timeout ?? settings.timeout ?? 120;
+				const themeConfig = mergeThemeConfig(settings.theme, theme, ctx.cwd);
+				const questionsData = loadQuestions(questions, ctx.cwd);
+				const snapshotDir = settings.snapshotDir ? expandHome(settings.snapshotDir) : undefined;
+				const sessionId = randomUUID();
+				const sessionToken = randomUUID();
+
+				return new Promise((resolve, reject) => {
+					let resolved = false;
+					let server: { close: () => void } | null = null;
+					const cleanup = () => { if (server) { server.close(); server = null; } };
+
+					const finish = (status: InterviewDetails["status"], responses: ResponseItem[] = []) => {
+						if (resolved) return;
+						resolved = true;
+						cleanup();
+						let text = "";
+						if (status === "completed") {
+							text = `User completed the interview form.\n\nResponses:\n${formatResponses(responses)}`;
+						} else if (status === "timeout") {
+							text = `Interview timed out after ${timeoutSeconds}s. Proceed with your best judgment.`;
+						} else {
+							text = "Interview was cancelled. Proceed with your best judgment.";
+						}
+						resolve({ content: [{ type: "text", text }], details: { status, url: "", responses } });
+					};
+
+					if (signal?.aborted) { finish("aborted"); return; }
+					signal?.addEventListener("abort", () => finish("aborted"), { once: true });
+
+					startInterviewServer(
+						{ questions: questionsData, sessionToken, sessionId, cwd: ctx.cwd, timeout: timeoutSeconds, port: settings.port, verbose, theme: themeConfig, snapshotDir, autoSaveOnSubmit: settings.autoSaveOnSubmit ?? true },
+						{
+							onSubmit: (responses) => finish("completed", responses),
+							onCancel: (reason, partial) => reason === "timeout" ? finish("timeout", partial ?? []) : finish("cancelled", partial ?? []),
+						},
+					).then((handle) => {
+						server = handle;
+						// Open browser directly (works in subprocess mode)
+						try { execSync(`open "${handle.url}"`, { stdio: "ignore", timeout: 5000 }); }
+						catch { /* best effort — user can find URL in logs */ }
+						console.log(`[interview-headless] Opened: ${handle.url}`);
+					}).catch((err) => { cleanup(); reject(err); });
+				});
 			}
 
 			if (typeof ctx.hasQueuedMessages === "function" && ctx.hasQueuedMessages()) {
