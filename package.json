@@ -38,6 +38,7 @@
     ]
   },
   "devDependencies": {
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "@mariozechner/pi-coding-agent": "*"
   }
 }
