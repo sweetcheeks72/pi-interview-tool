@@ -88,8 +88,16 @@ function listSessions(): SessionEntry[] {
 function writeSessions(data: SessionsFile): void {
 	ensurePiDir();
 	const tempFile = SESSIONS_FILE + ".tmp";
-	writeFileSync(tempFile, JSON.stringify(data, null, 2));
-	renameSync(tempFile, SESSIONS_FILE);
+	try {
+		writeFileSync(tempFile, JSON.stringify(data, null, 2));
+		renameSync(tempFile, SESSIONS_FILE);
+	} catch (err: any) {
+		try {
+			writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2));
+		} catch {
+			// Non-fatal — session tracking is best-effort
+		}
+	}
 }
 
 function pruneStale(sessions: SessionEntry[]): SessionEntry[] {
